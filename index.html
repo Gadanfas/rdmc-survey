@@ -969,11 +969,13 @@ function buildQuestions(mode){
 // ════════════════════════════════════════════════════════════
 let QS=[], ans={}, ansOther={}, idx=0, vq=[], sending=false;
 let SESSION_ID = null;
+let surveyCompleted = false; // blocks sendDropoff after full submission
 let STA_LIST=[], STA_EN_MAP={};
 
 function initSurvey(mode){
   shownGames={};
   MODE = mode;
+  surveyCompleted = false;
   QS = buildQuestions(mode);
   ans={}; ansOther={}; idx=0; vq=[];
   STA_LIST = (mode==='gl3' ? GL3_STA : LRT_STA).map(s=>s.ar);
@@ -1031,7 +1033,7 @@ function checkGame(fromQ, cb){
 // ══════════════════════════════════════════════════════════════
 function showGameIntro(level, onStart, onSkip){
   var msgs=[
-    {icon:'🎫',tag:'تحدي سريع',title:'احتفظ بعينيك على التذكرة!',
+    {icon:'🎫',tag:'تحدي سريع',title:'ركّز على التذكرة!',
      sub:''},
     {icon:'🔢',tag:'تحدي الذاكرة',title:'تذكّر التسلسل!',
      sub:''},
@@ -1252,7 +1254,7 @@ function launchQuiz(el, done){
     }
     el.innerHTML=makeHeader()
       +'<div class="game-logo-bar"><img src="'+(MODE==='gl3'?GL3_LOGO:LRT_LOGO)+'" alt="logo"></div>'
-      +'<div class="game-title">احتفظ بعينيك على التذكرة! 🎫</div>'
+      +'<div class="game-title">ركّز على التذكرة! 🎫</div>'
       +'<div class="game-sub">تابع أين تختبئ التذكرة الذهبية تحت القطارات</div>'
       +'<div class="game-hud">'
         +'<div class="hud-pill accent" id="sh-score">⭐ 0 / '+ROUNDS+'</div>'
@@ -1366,7 +1368,7 @@ function launchQuiz(el, done){
       revealTicket(function(){
         shuffle(numSwaps,function(){
           gamePhase='guess'; locked=false;
-          setMsg('أين التذكرة؟ اضغط! 🎯');
+          setMsg('أين التذكرة؟! ');
         });
       });
     },120);
@@ -1839,7 +1841,7 @@ function buildPartialPayload(){
   if(!MODE || !SESSION_ID) return null;
   const a = ans;
   const bv = (id) => buildVal(id, a[id]);
-  const lastQLabel = (vq && vq[idx]) ? ('Q'+vq[idx]) : 'unknown';
+  const lastQLabel = (vq && vq[idx]) ? ('Q'+vq[idx].id) : 'unknown';
   return {
     type:            'partial',
     session_id:      SESSION_ID,
@@ -1872,6 +1874,7 @@ function buildPartialPayload(){
 function sendDropoff(){
   if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return;
   if(!MODE || !SESSION_ID) return;
+  if(surveyCompleted) return; // don't overwrite a completed submission
   const payload = buildPartialPayload();
   if(!payload) return;
   // Use fetch with no-cors + keepalive — most reliable for Apps Script
@@ -1938,6 +1941,7 @@ async function submitSurvey(){
 
   if(ov.parentNode)ov.parentNode.removeChild(ov);
   sending=false;
+  surveyCompleted = true; // prevent sendDropoff from overwriting complete status
   markDone(MODE);
   clearProgress(MODE);
   renderThanks();
@@ -1952,7 +1956,7 @@ function renderLanding(){
     <div class="landing">
      
       <div class="landing-tagline">سكتنا واحدة.. ورأيك يهمنا</div>
-      <p class="landing-body">عشان المترو يبقى زي ما بتتمناه، رأيك هو البوصلة بتاعتنا.<br>شاركنا في استطلاع رأي سريع عن تجربتك معانا، وساعدنا نحول كل رحلة لتجربة أفضل ليك ولغيرك.</p>
+      <p class="landing-body">عشان المترو يبقى زي ما بتتمناه، رأيك هو المحرّك الأساسي لينا.<br>شاركنا في استطلاع رأي سريع عن تجربتك معانا، وساعدنا نحول كل رحلة لتجربة أفضل ليك ولغيرك.</p>
       <div class="landing-divider"></div>
       <p class="landing-choose">أي خدمة استخدمت اليوم؟<br>اختر لتبدأ الاستطلاع الخاص بها</p>
       <div class="picker-wrap">
@@ -2110,12 +2114,12 @@ function renderIntro(){
       <div class="ititle">استطلاع ركاب<br>${name}</div>
       <p class="idesc">رأيك يهمنا! ساعدنا في تحسين تجربتك من خلال الإجابة على هذا الاستطلاع.</p>
       <div class="istats">
-        <div class="ipill">⏱️ ~ دقائق</div>
+        <div class="ipill">⏱️ بضع دقائق</div>
         <div class="ipill">🔒 سري تمامًا</div>
       </div>
       <button class="bstart" onclick="startSurvey()">ابدأ الاستطلاع ←</button>
       <br>
-      <button class="bbck" style="max-width:240px;margin:.5rem auto 0" onclick="renderLanding()">→ اختر خدمة أخرى</button>
+      <button class="bbck" style="max-width:240px;margin:.5rem auto 0" onclick="renderLanding()">→ عودة إلى القائمة الرئيسية</button>
     </div>`;
 }
 
