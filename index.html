@@ -1867,7 +1867,8 @@ function buildPartialPayload(){
     Q36_Value:  a[36]?buildVal(36,a[36]['القيمة مقابل السعر']):'',
     Q36_Trust:  a[36]?buildVal(36,a[36]['الثقة-الاعتمادية']):'',
     Q37:a[37]??'',Q38:bv(38),Q39:bv(39),Q40:a[40]??'',Q41:a[41]??'',
-    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46)
+    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46),
+    raw_state: JSON.stringify({ans:a, ansOther:ansOther, idx:idx})
   };
 }
 
@@ -2042,39 +2043,57 @@ async function chooseSurvey(mode){
   // Fast path: same-browser localStorage check (instant, no network)
   if(isSubmitted(mode)){renderBlocked(mode);return;}
 
-  // Authoritative path: ask the server too — covers QR-code scans that
-  // open in an isolated in-app browser with empty localStorage.
-  // Shows a brief loading state while checking.
-  showCheckingScreen(mode);
-  const alreadyDone = await checkAlreadySubmittedServer(mode);
-  if(alreadyDone){
-    markDone(mode); // sync localStorage so future checks are instant
-    renderBlocked(mode);
-    return;
-  }
-
   initSurvey(mode);
   try{
     let sid=sessionStorage.getItem('rdmc_session_id');
     if(!sid){sid='rdmc-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);sessionStorage.setItem('rdmc_session_id',sid);}
     SESSION_ID=sid;
   }catch(e){SESSION_ID='rdmc-'+Date.now();}
-  // Check for saved progress in this session
+
+  // Same-tab fast resume (sessionStorage) — works when the tab was
+  // merely backgrounded/refreshed, not closed entirely.
   const saved = loadProgress(mode);
   if(saved && saved.idx > 0){
-    // Restore state
-    ans           = saved.ans           || {};
-    ansOther      = saved.ansOther      || {};
-    idx           = saved.idx           || 0;
+    ans             = saved.ans             || {};
+    ansOther        = saved.ansOther        || {};
+    idx             = saved.idx             || 0;
     surveyStartTime = saved.surveyStartTime || null;
-    shownGames    = saved.shownGames    || {};
-    vq            = getVQ();
+    shownGames      = saved.shownGames      || {};
+    vq              = getVQ();
     if(idx >= vq.length) idx = vq.length - 1;
-    // Show resume prompt
     renderResumePrompt(mode);
-  } else {
-    renderIntro();
+    return;
   }
+
+  // Authoritative server check — covers QR-code rescans where the tab
+  // was fully closed (sessionStorage gone) or opened in a fresh
+  // in-app browser (localStorage gone). Checks by device fingerprint.
+  showCheckingScreen(mode);
+  const result = await checkFingerprintServer(mode);
+
+  if(result.state === 'complete'){
+    markDone(mode); // sync localStorage so future checks are instant
+    renderBlocked(mode);
+    return;
+  }
+
+  if(result.state === 'partial' && result.raw_state){
+    try{
+      const restored = JSON.parse(result.raw_state);
+      ans             = restored.ans      || {};
+      ansOther        = restored.ansOther || {};
+      idx             = restored.idx      || 0;
+      vq              = getVQ();
+      if(idx >= vq.length) idx = vq.length - 1;
+      renderResumePrompt(mode);
+      return;
+    }catch(e){
+      // Corrupt/unreadable raw_state — fall through to fresh start
+    }
+  }
+
+  // Clear — no prior attempt this month, start normally
+  renderIntro();
 }
 
 // Brief loading screen shown while the server-side check runs
@@ -2087,13 +2106,13 @@ function showCheckingScreen(mode){
     </div>`;
 }
 
-// Ask Apps Script if this device/fingerprint already completed
-// this survey this month. Read-only — does not write anything.
+// Ask Apps Script for this device/fingerprint's status this month:
+// { state:'clear' } | { state:'partial', last_question, raw_state } | { state:'complete' }
 // Uses GET with query params: doPost responses are not reliably
 // readable cross-origin, but doGet responses are — this is the
 // only combination that actually works with Apps Script + fetch.
-async function checkAlreadySubmittedServer(mode){
-  if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return false;
+async function checkFingerprintServer(mode){
+  if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return {state:'clear'};
   try{
     const params = new URLSearchParams({
       action: 'check',
@@ -2103,11 +2122,11 @@ async function checkAlreadySubmittedServer(mode){
     });
     const resp = await fetch(GURL + '?' + params.toString(), { method:'GET' });
     const json = await resp.json();
-    return json && json.status === 'submitted';
+    return (json && json.state) ? json : {state:'clear'};
   }catch(e){
     // Network issue — fail open so a real passenger is never
     // wrongly blocked due to a connectivity hiccup.
-    return false;
+    return {state:'clear'};
   }
 }
 
