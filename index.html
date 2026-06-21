@@ -2038,8 +2038,21 @@ document.addEventListener('click',function(){
   if(p)p.classList.remove('open');
 });
 
-function chooseSurvey(mode){
+async function chooseSurvey(mode){
+  // Fast path: same-browser localStorage check (instant, no network)
   if(isSubmitted(mode)){renderBlocked(mode);return;}
+
+  // Authoritative path: ask the server too — covers QR-code scans that
+  // open in an isolated in-app browser with empty localStorage.
+  // Shows a brief loading state while checking.
+  showCheckingScreen(mode);
+  const alreadyDone = await checkAlreadySubmittedServer(mode);
+  if(alreadyDone){
+    markDone(mode); // sync localStorage so future checks are instant
+    renderBlocked(mode);
+    return;
+  }
+
   initSurvey(mode);
   try{
     let sid=sessionStorage.getItem('rdmc_session_id');
@@ -2061,6 +2074,39 @@ function chooseSurvey(mode){
     renderResumePrompt(mode);
   } else {
     renderIntro();
+  }
+}
+
+// Brief loading screen shown while the server-side check runs
+function showCheckingScreen(mode){
+  applyTheme(mode);
+  document.getElementById('app').innerHTML=`
+    <div class="blocked">
+      <div class="bico">⏳</div>
+      <div class="btitle">جاري التحقق...</div>
+    </div>`;
+}
+
+// Ask Apps Script if this device/fingerprint already completed
+// this survey this month. Read-only — does not write anything.
+async function checkAlreadySubmittedServer(mode){
+  if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return false;
+  try{
+    const resp = await fetch(GURL,{
+      method:'POST', mode:'cors',
+      body: JSON.stringify({
+        type: 'check',
+        survey_type: mode==='gl3' ? 'GL3 Green Line 3' : 'LRT Capital Train',
+        survey_month: surveyMonth(),
+        fingerprint: fingerprint()
+      })
+    });
+    const json = await resp.json();
+    return json && json.status === 'submitted';
+  }catch(e){
+    // Network/CORS issue — fail open so a real passenger is never
+    // wrongly blocked due to a connectivity hiccup.
+    return false;
   }
 }
 
