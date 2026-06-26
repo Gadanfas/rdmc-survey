@@ -664,7 +664,7 @@ function surveyMonth(){
 
 // ════════════════════════════════════════════════════════════
 // PROGRESS PERSISTENCE  — survives page refresh
-// Saves to sessionStorage (tab-scoped, clears when tab closes).
+// Saves to localStorage (persists across tab-close and browser restarts).
 // Key: rdmc_progress_<mode>
 // ════════════════════════════════════════════════════════════
 const PROG_KEY_GL3 = 'rdmc_prog_gl3';
@@ -676,26 +676,26 @@ function saveProgress(){
     const key = MODE==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
     const data = {
       mode: MODE,
-      idx: idx,
+      lastQId: (vq && vq[idx]) ? vq[idx].id : null, // resolve by question ID on resume, not array position
       ans: ans,
       ansOther: ansOther,
       surveyStartTime: surveyStartTime,
       shownGames: shownGames,
       ts: Date.now()
     };
-    sessionStorage.setItem(key, JSON.stringify(data));
+    localStorage.setItem(key, JSON.stringify(data));
   }catch(e){}
 }
 
 function loadProgress(mode){
   try{
     const key = mode==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
-    const raw = sessionStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     if(!raw) return null;
     const data = JSON.parse(raw);
     // Discard if older than 2 hours (stale session)
     if(Date.now() - data.ts > 2 * 60 * 60 * 1000){
-      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
       return null;
     }
     return data;
@@ -705,7 +705,7 @@ function loadProgress(mode){
 function clearProgress(mode){
   try{
     const key = mode==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
-    sessionStorage.removeItem(key);
+    localStorage.removeItem(key);
   }catch(e){}
 }
 
@@ -1868,7 +1868,10 @@ function buildPartialPayload(){
     Q36_Trust:  a[36]?buildVal(36,a[36]['الثقة-الاعتمادية']):'',
     Q37:a[37]??'',Q38:bv(38),Q39:bv(39),Q40:a[40]??'',Q41:a[41]??'',
     Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46),
-    raw_state: JSON.stringify({ans:a, ansOther:ansOther, idx:idx})
+    raw_state: JSON.stringify({
+      ans:a, ansOther:ansOther,
+      lastQId: (vq && vq[idx]) ? vq[idx].id : null  // resolve by question ID, not array position
+    })
   };
 }
 
@@ -2039,35 +2042,46 @@ document.addEventListener('click',function(){
   if(p)p.classList.remove('open');
 });
 
+// Resolve a safe index into vq given a target question id.
+// Never trusts a raw stored array position directly, since vq's
+// length/order can shift between sessions if showIf() conditions
+// evaluate differently with partially-restored answers.
+function resolveIdxByQId(qId){
+  if(qId === null || qId === undefined) return 0;
+  const pos = vq.findIndex(q => q.id === qId);
+  return pos >= 0 ? pos : 0;
+}
+
 async function chooseSurvey(mode){
   // Fast path: same-browser localStorage check (instant, no network)
   if(isSubmitted(mode)){renderBlocked(mode);return;}
 
   initSurvey(mode);
   try{
-    let sid=sessionStorage.getItem('rdmc_session_id');
-    if(!sid){sid='rdmc-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);sessionStorage.setItem('rdmc_session_id',sid);}
+    let sid=localStorage.getItem('rdmc_session_id');
+    if(!sid){sid='rdmc-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);localStorage.setItem('rdmc_session_id',sid);}
     SESSION_ID=sid;
   }catch(e){SESSION_ID='rdmc-'+Date.now();}
 
-  // Same-tab fast resume (sessionStorage) — works when the tab was
-  // merely backgrounded/refreshed, not closed entirely.
+  // Local resume (localStorage) — survives tab-close and browser restarts.
+  // Fast path: no network round-trip needed.
   const saved = loadProgress(mode);
-  if(saved && saved.idx > 0){
+  if(saved && saved.lastQId !== null && saved.lastQId !== undefined){
     ans             = saved.ans             || {};
     ansOther        = saved.ansOther        || {};
-    idx             = saved.idx             || 0;
     surveyStartTime = saved.surveyStartTime || null;
     shownGames      = saved.shownGames      || {};
     vq              = getVQ();
-    if(idx >= vq.length) idx = vq.length - 1;
+    // Resolve resume position by the actual question id reached,
+    // not a raw array index — immune to vq length/order changes.
+    idx = resolveIdxByQId(saved.lastQId);
     renderResumePrompt(mode);
     return;
   }
 
-  // Authoritative server check — covers QR-code rescans where the tab
-  // was fully closed (sessionStorage gone) or opened in a fresh
-  // in-app browser (localStorage gone). Checks by device fingerprint.
+  // Authoritative server check — covers cases where localStorage was
+  // cleared by the browser, or opened on a completely different device.
+  // Checks by device fingerprint against the sheet.
   showCheckingScreen(mode);
   const result = await checkFingerprintServer(mode);
 
@@ -2080,11 +2094,12 @@ async function chooseSurvey(mode){
   if(result.state === 'partial' && result.raw_state){
     try{
       const restored = JSON.parse(result.raw_state);
-      ans             = restored.ans      || {};
-      ansOther        = restored.ansOther || {};
-      idx             = restored.idx      || 0;
-      vq              = getVQ();
-      if(idx >= vq.length) idx = vq.length - 1;
+      ans      = restored.ans      || {};
+      ansOther = restored.ansOther || {};
+      vq       = getVQ();
+      // Resolve resume position by the actual question id reached,
+      // not a raw array index — immune to vq length/order changes.
+      idx = resolveIdxByQId(restored.lastQId);
       renderResumePrompt(mode);
       return;
     }catch(e){
@@ -2102,7 +2117,7 @@ function showCheckingScreen(mode){
   document.getElementById('app').innerHTML=`
     <div class="blocked">
       <div class="bico">⏳</div>
-      <div class="btitle">جاري التحقق...</div>
+      <div class="btitle">سكتنا واحدة...</div>
     </div>`;
 }
 
