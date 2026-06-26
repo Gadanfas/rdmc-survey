@@ -664,7 +664,7 @@ function surveyMonth(){
 
 // ════════════════════════════════════════════════════════════
 // PROGRESS PERSISTENCE  — survives page refresh
-// Saves to sessionStorage (tab-scoped, clears when tab closes).
+// Saves to localStorage (persists across tab-close and browser restarts).
 // Key: rdmc_progress_<mode>
 // ════════════════════════════════════════════════════════════
 const PROG_KEY_GL3 = 'rdmc_prog_gl3';
@@ -676,26 +676,26 @@ function saveProgress(){
     const key = MODE==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
     const data = {
       mode: MODE,
-      idx: idx,
+      lastQId: (vq && vq[idx]) ? vq[idx].id : null, // resolve by question ID on resume, not array position
       ans: ans,
       ansOther: ansOther,
       surveyStartTime: surveyStartTime,
       shownGames: shownGames,
       ts: Date.now()
     };
-    sessionStorage.setItem(key, JSON.stringify(data));
+    localStorage.setItem(key, JSON.stringify(data));
   }catch(e){}
 }
 
 function loadProgress(mode){
   try{
     const key = mode==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
-    const raw = sessionStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     if(!raw) return null;
     const data = JSON.parse(raw);
     // Discard if older than 2 hours (stale session)
     if(Date.now() - data.ts > 2 * 60 * 60 * 1000){
-      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
       return null;
     }
     return data;
@@ -705,7 +705,7 @@ function loadProgress(mode){
 function clearProgress(mode){
   try{
     const key = mode==='gl3' ? PROG_KEY_GL3 : PROG_KEY_LRT;
-    sessionStorage.removeItem(key);
+    localStorage.removeItem(key);
   }catch(e){}
 }
 
@@ -1867,7 +1867,11 @@ function buildPartialPayload(){
     Q36_Value:  a[36]?buildVal(36,a[36]['القيمة مقابل السعر']):'',
     Q36_Trust:  a[36]?buildVal(36,a[36]['الثقة-الاعتمادية']):'',
     Q37:a[37]??'',Q38:bv(38),Q39:bv(39),Q40:a[40]??'',Q41:a[41]??'',
-    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46)
+    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46),
+    raw_state: JSON.stringify({
+      ans:a, ansOther:ansOther,
+      lastQId: (vq && vq[idx]) ? vq[idx].id : null  // resolve by question ID, not array position
+    })
   };
 }
 
@@ -2038,43 +2042,73 @@ document.addEventListener('click',function(){
   if(p)p.classList.remove('open');
 });
 
+// Resolve a safe index into vq given a target question id.
+// Never trusts a raw stored array position directly, since vq's
+// length/order can shift between sessions if showIf() conditions
+// evaluate differently with partially-restored answers.
+function resolveIdxByQId(qId){
+  if(qId === null || qId === undefined) return 0;
+  const pos = vq.findIndex(q => q.id === qId);
+  return pos >= 0 ? pos : 0;
+}
+
 async function chooseSurvey(mode){
   // Fast path: same-browser localStorage check (instant, no network)
   if(isSubmitted(mode)){renderBlocked(mode);return;}
 
-  // Authoritative path: ask the server too — covers QR-code scans that
-  // open in an isolated in-app browser with empty localStorage.
-  // Shows a brief loading state while checking.
+  initSurvey(mode);
+  try{
+    let sid=localStorage.getItem('rdmc_session_id');
+    if(!sid){sid='rdmc-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);localStorage.setItem('rdmc_session_id',sid);}
+    SESSION_ID=sid;
+  }catch(e){SESSION_ID='rdmc-'+Date.now();}
+
+  // Local resume (localStorage) — survives tab-close and browser restarts.
+  // Fast path: no network round-trip needed.
+  const saved = loadProgress(mode);
+  if(saved && saved.lastQId !== null && saved.lastQId !== undefined){
+    ans             = saved.ans             || {};
+    ansOther        = saved.ansOther        || {};
+    surveyStartTime = saved.surveyStartTime || null;
+    shownGames      = saved.shownGames      || {};
+    vq              = getVQ();
+    // Resolve resume position by the actual question id reached,
+    // not a raw array index — immune to vq length/order changes.
+    idx = resolveIdxByQId(saved.lastQId);
+    renderResumePrompt(mode);
+    return;
+  }
+
+  // Authoritative server check — covers cases where localStorage was
+  // cleared by the browser, or opened on a completely different device.
+  // Checks by device fingerprint against the sheet.
   showCheckingScreen(mode);
-  const alreadyDone = await checkAlreadySubmittedServer(mode);
-  if(alreadyDone){
+  const result = await checkFingerprintServer(mode);
+
+  if(result.state === 'complete'){
     markDone(mode); // sync localStorage so future checks are instant
     renderBlocked(mode);
     return;
   }
 
-  initSurvey(mode);
-  try{
-    let sid=sessionStorage.getItem('rdmc_session_id');
-    if(!sid){sid='rdmc-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);sessionStorage.setItem('rdmc_session_id',sid);}
-    SESSION_ID=sid;
-  }catch(e){SESSION_ID='rdmc-'+Date.now();}
-  // Check for saved progress in this session
-  const saved = loadProgress(mode);
-  if(saved && saved.idx > 0){
-    // Restore state
-    ans           = saved.ans           || {};
-    ansOther      = saved.ansOther      || {};
-    idx           = saved.idx           || 0;
-    surveyStartTime = saved.surveyStartTime || null;
-    shownGames    = saved.shownGames    || {};
-    vq            = getVQ();
-    if(idx >= vq.length) idx = vq.length - 1;
-    // Show resume prompt
-    renderResumePrompt(mode);
-  } else {
-    renderIntro();
+  if(result.state === 'partial' && result.raw_state){
+    try{
+      const restored = JSON.parse(result.raw_state);
+      ans      = restored.ans      || {};
+      ansOther = restored.ansOther || {};
+      vq       = getVQ();
+      // Resolve resume position by the actual question id reached,
+      // not a raw array index — immune to vq length/order changes.
+      idx = resolveIdxByQId(restored.lastQId);
+      renderResumePrompt(mode);
+      return;
+    }catch(e){
+      // Corrupt/unreadable raw_state — fall through to fresh start
+    }
   }
+
+  // Clear — no prior attempt this month, start normally
+  renderIntro();
 }
 
 // Brief loading screen shown while the server-side check runs
@@ -2083,17 +2117,17 @@ function showCheckingScreen(mode){
   document.getElementById('app').innerHTML=`
     <div class="blocked">
       <div class="bico">⏳</div>
-      <div class="btitle">جاري التحقق...</div>
+      <div class="btitle">سكتنا واحدة...</div>
     </div>`;
 }
 
-// Ask Apps Script if this device/fingerprint already completed
-// this survey this month. Read-only — does not write anything.
+// Ask Apps Script for this device/fingerprint's status this month:
+// { state:'clear' } | { state:'partial', last_question, raw_state } | { state:'complete' }
 // Uses GET with query params: doPost responses are not reliably
 // readable cross-origin, but doGet responses are — this is the
 // only combination that actually works with Apps Script + fetch.
-async function checkAlreadySubmittedServer(mode){
-  if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return false;
+async function checkFingerprintServer(mode){
+  if(!GURL || GURL==='YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') return {state:'clear'};
   try{
     const params = new URLSearchParams({
       action: 'check',
@@ -2103,11 +2137,11 @@ async function checkAlreadySubmittedServer(mode){
     });
     const resp = await fetch(GURL + '?' + params.toString(), { method:'GET' });
     const json = await resp.json();
-    return json && json.status === 'submitted';
+    return (json && json.state) ? json : {state:'clear'};
   }catch(e){
     // Network issue — fail open so a real passenger is never
     // wrongly blocked due to a connectivity hiccup.
-    return false;
+    return {state:'clear'};
   }
 }
 
