@@ -797,6 +797,12 @@ const TR = {
   'نعم — لكن لا أستخدمها':'Yes - do not use it','لا — لا أعرفها':'No - not aware',
   'المونوريل':'Monorail','خدمات الركوب التشاركي (Uber, Careem, DiDi...)':'Ride-hailing apps',
   'التاكسي الأبيض':'White Taxi','تاكسي العاصمة':'Capital Taxi',
+  'هل تعلم أنه يمكنك الآن استخدام نفس كارت المحفظة في كلاً من مترو الخط الأخضر الثالث و قطار العاصمة؟':'Wallet Card Interoperability Awareness',
+  'ما هي اقتراحاتك لتحسين نظافة المحطة؟':'Station Cleanliness Improvement Suggestions',
+  'ما هي اقتراحاتك لتحسين نظافة القطار؟':'Train Cleanliness Improvement Suggestions',
+  'أيوه، جربته قبل كده.':'Yes, I have tried this',
+  'أيوه، بس لسه ما جربتوش.':'Yes, but I haven\'t tried this yet',
+  'لأ، ما كنتش أعرف الموضوع ده.':'No, I didn\'t know about this',
   'نعم، أعرفه جيدًا':'Yes - well aware',
   'نعم، سمعت به لكن لا أعرف عنه الكثير':'Yes - heard of it, limited knowledge',
   'لا، لم أسمع به':'No - never heard of it',
@@ -853,14 +859,14 @@ function buildQuestions(mode){
   const otherRail = isGL3 ? 'قطار العاصمة (LRT)' : 'مترو الخط الأخضر الثالث (GL3)';
 
   const TRAR=[
-    'المشي', otherRail,
+    'المشي', 'المونوريل', otherRail,
     'أتوبيس هيئة النقل العام (CTA)','أتوبيس مواصلات مصر','ميكروباص',
     'أتوبيس من خدمات الركوب التشاركي (Uber Bus, SWVL)',
     'سيارة من خدمات الركوب التشاركي (Uber, Careem, DiDi...)',
     'تاكسي','موتوسيكل / سكوتر','توك توك','سيارة خاصة',OTHER_OPT
   ];
   const TRAR2=[
-    otherRail,
+    'المونوريل', otherRail,
     'أتوبيس هيئة النقل العام (CTA)','أتوبيس مواصلات مصر','ميكروباص',
     'أتوبيس من خدمات الركوب التشاركي (Uber Bus, SWVL)',
     'سيارة أو سكوتر من خدمات الركوب التشاركي (Uber, Careem, DiDi...)',
@@ -876,7 +882,15 @@ function buildQuestions(mode){
     {id:4,type:'multi',text:'بعد الخروج، كيف ستكمل رحلتك؟ (يمكن اختيار أكثر من إجابة)',opts:TRAR,req:true},
     {id:5,type:'station',text:`من أي محطة بدأت رحلتك اليوم على ${srvName}؟`,req:true},
     {id:6,type:'scale',text:'ما مدى رضاك عن مستوى النظافة في هذه المحطة؟',st:'satisfaction',req:true},
+    {id:61,type:'shorttext',
+     text:'ما هي اقتراحاتك لتحسين نظافة المحطة؟',
+     ph:'اكتب اقتراحاتك هنا...',maxlen:200,
+     showIf:a=>a[6]!==null&&a[6]!==undefined&&a[6]<3,req:true},
     {id:7,type:'scale',text:'ما مدى رضاك عن مستوى النظافة داخل القطار اليوم؟',st:'satisfaction',req:true},
+    {id:71,type:'shorttext',
+     text:'ما هي اقتراحاتك لتحسين نظافة القطار؟',
+     ph:'اكتب اقتراحاتك هنا...',maxlen:200,
+     showIf:a=>a[7]!==null&&a[7]!==undefined&&a[7]<3,req:true},
     {id:8,type:'scale',text:'إلى أي مدى كانت اللافتات الإرشادية داخل هذه المحطة واضحة؟',st:'clarity',req:true},
     {id:9,type:'scale',text:'ما مدى وضوح وسهولة قراءة خرائط الاتجاهات في هذه المحطة؟',st:'clarity',req:true},
     {id:10,type:'scale',text:'إلى أي مدى كانت الإعلانات الصوتية في هذه المحطة واضحة؟',st:'clarity',req:true},
@@ -884,6 +898,10 @@ function buildQuestions(mode){
     {id:12,type:'scale',text:'ما مدى سهولة التحرك داخل المحطة؟',st:'ease',req:true},
     {id:13,type:'single',text:'غالبا كيف تقوم بشراء تذكرتك؟',
      opts:['شباك التذاكر','ماكينة بيع التذاكر','أستعمل كارت المحفظة','اشتراك'],req:true},
+    {id:131,type:'single',
+     text:'هل تعلم أنه يمكن الآن استخدام كارت المحفظة في كلاً من مترو الخط الأخضر الثالث و قطار العاصمة؟',
+     opts:['أيوه، جربته قبل كده.','أيوه، بس لسه ما جربتوش.','لأ، ما كنتش أعرف الموضوع ده.'],
+     showIf:a=>a[13]==='أستعمل كارت المحفظة',req:true},
     {id:14,type:'scale',text:'ما مدى سهولة شراء التذكرة اليوم؟',st:'ease',
      showIf:a=>['شباك التذاكر','ماكينة بيع التذاكر'].includes(a[13]),req:true},
     {id:15,type:'multi',text:'كيف تقوم بشحن كارت المحفظة؟ (يمكن اختيار أكثر من إجابة)',
@@ -1854,8 +1872,8 @@ function buildPartialPayload(){
     start_time:      surveyStartTime ? new Date(surveyStartTime).toISOString() : '',
     Q1:bv(1),Q2:bv(2),Q3:bv(3),Q4:bv(4),
     Q5:a[5]?(STA_EN_MAP[a[5]]||a[5]):'',
-    Q6:a[6]??'',Q7:a[7]??'',Q8:a[8]??'',Q9:a[9]??'',Q10:a[10]??'',
-    Q11:a[11]??'',Q12:a[12]??'',Q13:bv(13),Q14:a[14]??'',
+    Q6:a[6]??'',Q61:a[61]??'',Q7:a[7]??'',Q71:a[71]??'',Q8:a[8]??'',Q9:a[9]??'',Q10:a[10]??'',
+    Q11:a[11]??'',Q12:a[12]??'',Q13:bv(13),Q131:bv(131),Q14:a[14]??'',
     Q15:bv(15),Q16:a[16]??'',Q17:bv(17),Q18:bv(18),
     Q19:a[19]??'',Q20:a[20]??'',Q21:a[21]??'',Q22:a[22]??'',Q23:a[23]??'',
     Q24:bv(24),Q25:a[25]??'',Q26:bv(26),Q27:a[27]??'',
@@ -1867,11 +1885,7 @@ function buildPartialPayload(){
     Q36_Value:  a[36]?buildVal(36,a[36]['القيمة مقابل السعر']):'',
     Q36_Trust:  a[36]?buildVal(36,a[36]['الثقة-الاعتمادية']):'',
     Q37:a[37]??'',Q38:bv(38),Q39:bv(39),Q40:a[40]??'',Q41:a[41]??'',
-    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46),
-    raw_state: JSON.stringify({
-      ans:a, ansOther:ansOther,
-      lastQId: (vq && vq[idx]) ? vq[idx].id : null  // resolve by question ID, not array position
-    })
+    Q42:bv(42),Q43:bv(43),Q44:bv(44),Q45:bv(45),Q46:bv(46)
   };
 }
 
@@ -1920,8 +1934,8 @@ async function submitSurvey(){
     end_time:        new Date().toISOString(),
     Q1:bv(1),Q2:bv(2),Q3:bv(3),Q4:bv(4),
     Q5:a[5]?(STA_EN_MAP[a[5]]||a[5]):'',
-    Q6:a[6]??'',Q7:a[7]??'',Q8:a[8]??'',Q9:a[9]??'',Q10:a[10]??'',
-    Q11:a[11]??'',Q12:a[12]??'',Q13:bv(13),Q14:a[14]??'',
+    Q6:a[6]??'',Q61:a[61]??'',Q7:a[7]??'',Q71:a[71]??'',Q8:a[8]??'',Q9:a[9]??'',Q10:a[10]??'',
+    Q11:a[11]??'',Q12:a[12]??'',Q13:bv(13),Q131:bv(131),Q14:a[14]??'',
     Q15:bv(15),Q16:a[16]??'',Q17:bv(17),Q18:bv(18),
     Q19:a[19]??'',Q20:a[20]??'',Q21:a[21]??'',Q22:a[22]??'',Q23:a[23]??'',
     Q24:bv(24),Q25:a[25]??'',Q26:bv(26),Q27:a[27]??'',
@@ -2091,20 +2105,11 @@ async function chooseSurvey(mode){
     return;
   }
 
-  if(result.state === 'partial' && result.raw_state){
-    try{
-      const restored = JSON.parse(result.raw_state);
-      ans      = restored.ans      || {};
-      ansOther = restored.ansOther || {};
-      vq       = getVQ();
-      // Resolve resume position by the actual question id reached,
-      // not a raw array index — immune to vq length/order changes.
-      idx = resolveIdxByQId(restored.lastQId);
-      renderResumePrompt(mode);
-      return;
-    }catch(e){
-      // Corrupt/unreadable raw_state — fall through to fresh start
-    }
+  if(result.state === 'partial'){
+    // Partial exists — localStorage handles resume on same device.
+    // Across different devices, respondent starts fresh (not blocked).
+    renderIntro();
+    return;
   }
 
   // Clear — no prior attempt this month, start normally
@@ -2122,7 +2127,7 @@ function showCheckingScreen(mode){
 }
 
 // Ask Apps Script for this device/fingerprint's status this month:
-// { state:'clear' } | { state:'partial', last_question, raw_state } | { state:'complete' }
+// { state:'clear' } | { state:'partial', last_question } | { state:'complete' }
 // Uses GET with query params: doPost responses are not reliably
 // readable cross-origin, but doGet responses are — this is the
 // only combination that actually works with Apps Script + fetch.
